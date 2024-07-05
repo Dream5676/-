@@ -1,0 +1,129 @@
+#include <linux/init.h>
+#include <linux/module.h>
+#include<linux/fs.h>
+#include<linux/uaccess.h>
+#include "myfile.h"
+
+#define CNAME "myfile" // 节点名称
+#define SIZE 32   //申请的空间大小
+int major;
+char kbuff[SIZE] = {0};
+char *data_save = NULL;
+
+//打开文件
+int myfile_open(struct inode* inode,struct file* file)
+{
+    printk("%s:%s:%d\n",__FILE__,__func__,__LINE__);
+    //在内核申请一部分空间
+    data_save = vmalloc(SIZE);
+    return 0;
+}
+
+//将内核资源发送给用户
+ssize_t myfile_read(struct file* file,
+    char __user* ubuf, size_t size, loff_t* offs)
+{
+    int ret;
+    printk("%s:%s:%d\n",__FILE__,__func__,__LINE__);
+    //判断是否超出申请的内存大小，以申请的内存大小为准
+    if(size > sizeof(kbuff))
+        size = sizeof(kbuff);
+    ret = copy_to_user(ubuf,kbuff,size);
+    if(ret)
+    {
+        printk("cpoy data to user error\n");
+        return -EIO;
+    }
+    return size;
+}
+
+//从用户读取数据
+ssize_t myfile_write(struct file* file,
+    const char __user* ubuf, size_t size, loff_t* offs)
+{
+    int ret;
+    printk("%s:%s:%d\n",__FILE__,__func__,__LINE__);
+    //判断是否超出申请的内存大小，以申请的内存大小为准
+    if(size > sizeof(kbuff))
+        size = sizeof(kbuff);
+    ret = copy_from_user(kbuff,ubuf,size);
+    if(ret)
+    {
+        printk("cpoy data from user error\n");
+        return -EIO;
+    }
+    return size;
+}
+
+//关闭文件
+int myfile_close(struct inode* inode,struct file* file)
+{
+    printk("%s:%s:%d\n",__FILE__,__func__,__LINE__);
+    //将在内核申请的空间释放掉
+    vfree(data_save);
+    return 0;
+}
+
+long myfile_ioctl(struct file* file,
+    unsigned int cmd, unsigned long arg)
+{
+    int ret;
+    printk("%s:%s:%d\n",__FILE__,__func__,__LINE__);
+    switch(cmd)
+    {
+        case FILE_WRITE:
+            //往内核中写数据,先清除之前的数据
+            memset(data_save,SIZE,0);
+            ret = copy_from_user(data_save,(void*)arg,CMD_SIZE(cmd));
+            if(ret)
+            {
+                printk("copy data from user error\n");
+                return -EIO;
+            }
+            printk("data_save = %s;%s:%d\n", data_save, __func__, __LINE__);
+            break;
+        case FILE_READ:
+            //从内核中读数据
+            ret = copy_to_user((void*)arg,data_save,CMD_SIZE(cmd));
+            if(ret)
+            {
+                printk("copy data to user error\n");
+                return -EIO;
+            }
+            printk("data_save = %s;%s:%d\n", data_save, __func__, __LINE__);
+            break;
+    }
+    return 0;
+}
+
+//文件操作的初始化
+struct file_operations fops = {
+    .open = myfile_open,
+    .read = myfile_read,
+    .write = myfile_write,
+    .release = myfile_close,
+    .unlocked_ioctl = myfile_ioctl,
+};
+
+//入口
+static int __init myfile_init(void)
+{
+    //注册设备
+    major = register_chrdev(0,CNAME,&fops);
+    if(major < 0)
+    {
+        printk("register_chrdev error\n");
+        return major;
+    }
+    printk("register success,major = %d\n",major);
+    return 0;
+}
+
+//出口
+static void __exit myfile_exit(void)
+{
+    unregister_chrdev(major,CNAME);
+}
+module_init(myfile_init);
+module_exit(myfile_exit);
+MODULE_LICENSE("GPL"); //许可证
